@@ -20,13 +20,12 @@ jobs:
 
       - run: flutter pub get
 
-      # 1. تعديل الـ base-href لتكون Root "/"
-      - run: flutter build web --release --base-href "/" --no-wasm-dry-run
+      # تعديل الـ base-href ليتوافق مع اسم المستودع الحالي
+      - run: flutter build web --release --base-href "/aksab_admin/" --no-wasm-dry-run
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/web
-          # 2. إضافة اسم الدومين هنا عشان GitHub ميمسحوش
-          cname: admin.aksabtech.biz
+          # شلنا الـ CNAME عشان نعتمد على رابط جيت هب مؤقتاً
