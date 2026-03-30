@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:io' as io;
 import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:excel/excel.dart';
@@ -103,7 +103,7 @@ class ExcelImportService {
       if (kIsWeb) {
         uploadTask = ref.putData(file.bytes!, metadata);
       } else {
-        uploadTask = ref.putFile(File(file.path!), metadata);
+        uploadTask = ref.putFile(io.File(file.path!), metadata);
       }
 
       TaskSnapshot snapshot = await uploadTask;

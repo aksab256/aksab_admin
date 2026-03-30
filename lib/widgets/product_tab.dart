@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart'; // محرك بلازا الجديد
-import 'dart:io';
+import 'dart:io' as io;
 import 'dart:convert';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
@@ -62,7 +63,7 @@ class _ProductTabState extends State<ProductTab> {
       
       UploadTask uploadTask;
       if (Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS) {
-        uploadTask = storageRef.putFile(File(xFile.path), metadata);
+        uploadTask = storageRef.putFile(io.File(xFile.path), metadata);
       } else {
         final bytes = await xFile.readAsBytes();
         uploadTask = storageRef.putData(bytes, metadata);
@@ -263,7 +264,7 @@ class _ProductTabState extends State<ProductTab> {
                 decoration: BoxDecoration(border: Border.all(color: index == 0 ? Colors.blue : Colors.grey), borderRadius: BorderRadius.circular(8)),
                 child: selectedImages[index] == null 
                   ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.add_a_photo), Text("صورة ${index + 1}")]) 
-                  : ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(File(selectedImages[index]!.path), fit: BoxFit.cover)),
+                  : ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(io.File(selectedImages[index]!.path), fit: BoxFit.cover)),
               ),
             ),
           ),

@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart'; // الانتقال لنظام بلازا الموحد
-import 'dart:io';
+import 'dart:io' as io;
 
 class SubCategoryTab extends StatefulWidget {
   const SubCategoryTab({super.key});
@@ -66,7 +67,7 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
       UploadTask uploadTask;
       // دعم الرفع من الموبايل أو الويب (لوحة التحكم)
       if (Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS) {
-        uploadTask = storageRef.putFile(File(xFile.path), metadata);
+        uploadTask = storageRef.putFile(io.File(xFile.path), metadata);
       } else {
         final bytes = await xFile.readAsBytes();
         uploadTask = storageRef.putData(bytes, metadata);
@@ -166,7 +167,7 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: _selectedImage != null
-                          ? Image.file(File(_selectedImage!.path), fit: BoxFit.cover)
+                          ? Image.file(io.File(_selectedImage!.path), fit: BoxFit.cover)
                           : Image.network(_existingImageUrl!, fit: BoxFit.cover),
                     ),
             ),
