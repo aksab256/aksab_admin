@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:firebase_storage/firebase_storage.dart'; // الانتقال لنظام بلازا الموحد
+import 'dart:io';
 
 class SubCategoryTab extends StatefulWidget {
   const SubCategoryTab({super.key});
@@ -17,12 +17,9 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
 
   String? _selectedMainId;
   XFile? _selectedImage;
-  String? _existingImageUrl; // رابط الصورة الموجودة في حالة التعديل
-  String? _editingDocId;    // معرف المستند الجاري تعديله
+  String? _existingImageUrl;
+  String? _editingDocId;
   bool _isLoading = false;
-
-  final String cloudName = "dgmmx6jbu";
-  final String uploadPreset = "commerce";
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
@@ -35,7 +32,6 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
     }
   }
 
-  // دالة تحضير التعديل
   void _prepareUpdate(DocumentSnapshot doc) {
     setState(() {
       _editingDocId = doc.id;
@@ -58,27 +54,38 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
     });
   }
 
-  Future<Map<String, String>?> _uploadToCloudinary(XFile xFile) async {
+  // 🚀 محرك الرفع الجديد المتوافق مع معايير بلازا
+  Future<Map<String, String>?> _uploadToFirebase(XFile xFile) async {
     try {
-      final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
-      final bytes = await xFile.readAsBytes();
-      final request = http.MultipartRequest('POST', url)
-        ..fields['upload_preset'] = uploadPreset
-        ..fields['folder'] = 'subCategoryImages'
-        ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: xFile.name));
+      // تنظيم الصور في مجلد خاص بالأقسام الفرعية
+      String fileName = 'subCategoryImages/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
+      Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      final response = await request.send();
-      if (response.statusCode == 200) {
-        final responseData = await response.stream.bytesToString();
-        final jsonResponse = jsonDecode(responseData);
-        return {'url': jsonResponse['secure_url'], 'public_id': jsonResponse['public_id']};
+      SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
+      
+      UploadTask uploadTask;
+      // دعم الرفع من الموبايل أو الويب (لوحة التحكم)
+      if (Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS) {
+        uploadTask = storageRef.putFile(File(xFile.path), metadata);
+      } else {
+        final bytes = await xFile.readAsBytes();
+        uploadTask = storageRef.putData(bytes, metadata);
       }
-    } catch (e) { print("Upload Error: $e"); }
-    return null;
+
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      return {
+        'url': downloadUrl,
+        'public_id': fileName // نستخدم المسار كمعرف للهوية تماماً كالسابق
+      };
+    } catch (e) {
+      debugPrint("Upload Error: $e");
+      return null;
+    }
   }
 
   Future<void> _saveSubCategory() async {
-    // في التعديل الصورة ليست إجبارية إذا كانت موجودة مسبقاً
     if (_nameController.text.isEmpty || _selectedMainId == null || (_selectedImage == null && _existingImageUrl == null)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("أكمل البيانات: الاسم، القسم، والصورة")));
       return;
@@ -90,7 +97,7 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
       String? finalPublicId;
 
       if (_selectedImage != null) {
-        final uploadResult = await _uploadToCloudinary(_selectedImage!);
+        final uploadResult = await _uploadToFirebase(_selectedImage!);
         if (uploadResult != null) {
           finalUrl = uploadResult['url'];
           finalPublicId = uploadResult['public_id'];
@@ -104,6 +111,7 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
         'imageUrl': finalUrl,
         'status': 'active',
       };
+
       if (finalPublicId != null) data['imagePublicId'] = finalPublicId;
 
       if (_editingDocId != null) {
@@ -157,9 +165,9 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
                   ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.cloud_upload, size: 40), Text("اضغط لرفع الصورة")])
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: _selectedImage != null 
-                        ? Image.network(_selectedImage!.path, fit: BoxFit.cover)
-                        : Image.network(_existingImageUrl!, fit: BoxFit.cover),
+                      child: _selectedImage != null
+                          ? Image.file(File(_selectedImage!.path), fit: BoxFit.cover)
+                          : Image.network(_existingImageUrl!, fit: BoxFit.cover),
                     ),
             ),
           ),
@@ -188,15 +196,16 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
                 itemCount: snapshot.data!.docs.length,
                 itemBuilder: (context, index) {
                   var doc = snapshot.data!.docs[index];
+                  final data = doc.data() as Map<String, dynamic>;
                   return Card(
                     child: ListTile(
-                      leading: Image.network(doc['imageUrl'], width: 50, errorBuilder: (c, e, s) => const Icon(Icons.error)),
+                      leading: Image.network(doc['imageUrl'], width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.error)),
                       title: Text(doc['name']),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _prepareUpdate(doc)),
-                          IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _confirmDelete(doc.id)),
+                          IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _confirmDelete(doc.id, data['imagePublicId'])),
                         ],
                       ),
                     ),
@@ -210,13 +219,25 @@ class _SubCategoryTabState extends State<SubCategoryTab> {
     );
   }
 
-  Future<void> _confirmDelete(String docId) async {
+  Future<void> _confirmDelete(String docId, String? storagePath) async {
     bool confirm = await showDialog(
-      context: context,
-      builder: (context) => Directionality(textDirection: TextDirection.rtl, child: AlertDialog(title: const Text("تأكيد الحذف"), content: const Text("هل أنت متأكد من حذف هذا القسم الفرعي؟"), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("إلغاء")), TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("حذف الآن", style: TextStyle(color: Colors.red)))]))
+        context: context,
+        builder: (context) => Directionality(textDirection: TextDirection.rtl, child: AlertDialog(title: const Text("تأكيد الحذف"), content: const Text("هل أنت متأكد من حذف هذا القسم الفرعي؟"), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("إلغاء")), TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("حذف الآن", style: TextStyle(color: Colors.red)))]))
     );
+
     if (confirm == true) {
+      // 1. حذف المستند من Firestore
       await FirebaseFirestore.instance.collection('subCategory').doc(docId).delete();
+      
+      // 2. 🛡️ حذف الصورة من Storage لتوفير المساحة (أمان التكلفة)
+      if (storagePath != null && storagePath.startsWith('subCategoryImages/')) {
+        try {
+          await FirebaseStorage.instance.ref().child(storagePath).delete();
+        } catch (e) {
+          debugPrint("Error deleting subcategory image: $e");
+        }
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("تم الحذف بنجاح")));
     }
   }

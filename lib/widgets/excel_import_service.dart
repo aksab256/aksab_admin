@@ -1,16 +1,14 @@
 import 'dart:io';
-import 'dart:typed_data'; 
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:firebase_storage/firebase_storage.dart'; // محرك بلازا الموحد
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ExcelImportService {
-  static const String cloudName = "dgmmx6jbu";
-  static const String uploadPreset = "commerce";
+  // تم الاستغناء عن Cloudinary و الـ Presets لتوحيد الخدمات في بلازا
 
   static Future<void> importWithImages({
     required BuildContext context,
@@ -23,25 +21,24 @@ class ExcelImportService {
 
       for (var table in excel.tables.keys) {
         var rows = excel.tables[table]!.rows;
-        
+
         // البدء من الصف الثاني لتخطي العناوين
         for (var i = 1; i < rows.length; i++) {
           var row = rows[i];
-          
+
           String name = row[0]?.value?.toString() ?? "";
           
-          // تنظيف الباركود من أي زوائد عشرية ناتجة عن الإكسل
+          // تنظيف الباركود من أي زوائد عشرية
           String rawBarcode = row[1]?.value?.toString() ?? "";
           String barcode = rawBarcode.split('.').first.trim();
-          
+
           if (barcode.isEmpty || name.isEmpty) continue;
 
-          _showSnackBar(context, "جاري معالجة: $name");
+          _showSnackBar(context, "جاري رفع بيانات وصورة: $name");
 
-          // الربط بالترتيب (Index Mapping) لتفادي تغير أسماء الملفات في الأندرويد
+          // الربط بالترتيب (Index Mapping)
           PlatformFile? matchedImage;
-          int imageIndex = i - 1; 
-
+          int imageIndex = i - 1;
           if (imageIndex < imageFiles.length) {
             matchedImage = imageFiles[imageIndex];
           }
@@ -50,23 +47,24 @@ class ExcelImportService {
           List<String> publicIds = [];
 
           if (matchedImage != null) {
-            var result = await _uploadToCloudinary(matchedImage);
+            // 🚀 الرفع لـ Firebase Storage بدلاً من Cloudinary
+            var result = await _uploadToFirebase(matchedImage);
             if (result != null) {
               urls.add(result['url']!);
               publicIds.add(result['public_id']!);
             }
           }
 
-          // معالجة الوحدات وفصلها للشكل القديم والجديد
+          // معالجة الوحدات
           String unitsRaw = row[6]?.value?.toString() ?? "قطعة:1";
           List<Map<String, dynamic>> parsedUnits = _parseUnits(unitsRaw);
 
-          // الشكل القديم: [{unitName: "زجاجة"}, {unitName: "كرتونة"}]
+          // الشكل القديم والجديد (Strongly Balanced)
           List<Map<String, dynamic>> oldStyleUnits = parsedUnits.map((u) => {
             'unitName': u['unitName']
           }).toList();
 
-          // إضافة البيانات لـ Firestore
+          // إضافة البيانات لـ Firestore بنظام بلازا
           await FirebaseFirestore.instance.collection('products').add({
             'name': name.trim(),
             'barcode': barcode,
@@ -77,50 +75,48 @@ class ExcelImportService {
             'status': 'active',
             'order': 0,
             'imageUrls': urls,
-            'imagePublicIds': publicIds,
-            'units': oldStyleUnits, // الحقل القديم المطلوب
-            'unitsWithFactors': parsedUnits, // الحقل الجديد للعمليات اللوجستية
+            'imagePublicIds': publicIds, // المسارات في Storage
+            'units': oldStyleUnits,
+            'unitsWithFactors': parsedUnits,
             'createdAt': FieldValue.serverTimestamp(),
           });
-          
-          // تأخير بسيط لضمان استقرار عمليات الرفع
-          await Future.delayed(const Duration(milliseconds: 500));
+
+          // تأخير بسيط لضمان استقرار الرفع المتتالي
+          await Future.delayed(const Duration(milliseconds: 300));
         }
       }
-      _showDialog(context, "تمت العملية", "تم الاستيراد بنجاح وتحديث كافة حقول الوحدات ✅");
+      _showDialog(context, "تمت العملية بنجاح", "تم استيراد كافة المنتجات ورفع الصور لسيرفرات بلازا الموحدة ✅");
     } catch (e) {
-      _showDialog(context, "خطأ في الاستيراد", e.toString());
+      _showDialog(context, "خطأ في الاستيراد", "حدث خطأ: ${e.toString()}");
     }
   }
 
-  static Future<Map<String, String>?> _uploadToCloudinary(PlatformFile file) async {
+  // 🚀 دالة الرفع الجديدة لـ Firebase Storage (متوافقة مع الويب والموبايل)
+  static Future<Map<String, String>?> _uploadToFirebase(PlatformFile file) async {
     try {
-      final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
-      
-      Uint8List fileBytes;
+      String fileName = 'productImages/${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+      Reference ref = FirebaseStorage.instance.ref().child(fileName);
+
+      SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
+      UploadTask uploadTask;
+
       if (kIsWeb) {
-        fileBytes = file.bytes!;
+        uploadTask = ref.putData(file.bytes!, metadata);
       } else {
-        fileBytes = await File(file.path!).readAsBytes();
+        uploadTask = ref.putFile(File(file.path!), metadata);
       }
 
-      var request = http.MultipartRequest('POST', url)
-        ..fields['upload_preset'] = uploadPreset
-        ..fields['folder'] = 'productImages'
-        ..files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: file.name));
+      TaskSnapshot snapshot = await uploadTask;
+      String url = await snapshot.ref.getDownloadURL();
 
-      var response = await request.send();
-      if (response.statusCode == 200) {
-        var data = jsonDecode(await response.stream.bytesToString());
-        return {
-          'url': data['secure_url'], 
-          'public_id': data['public_id']
-        };
-      }
+      return {
+        'url': url,
+        'public_id': fileName
+      };
     } catch (e) {
+      debugPrint("Firebase Upload Error in Service: $e");
       return null;
     }
-    return null;
   }
 
   static Future<String?> _getIdByName(String collection, String name) async {
@@ -159,7 +155,7 @@ class ExcelImportService {
       SnackBar(
         content: Text(message, textAlign: TextAlign.right, style: const TextStyle(fontFamily: 'Cairo')),
         backgroundColor: isError ? Colors.red : Colors.blueGrey,
-        duration: const Duration(seconds: 1),
+        duration: const Duration(milliseconds: 800),
       ),
     );
   }
@@ -171,12 +167,10 @@ class ExcelImportService {
         title: Text(title, textAlign: TextAlign.right),
         content: Text(msg, textAlign: TextAlign.right),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx), 
-            child: const Text("تم")
-          )
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("تم"))
         ],
       ),
     );
   }
 }
+

@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
+import 'package:firebase_storage/firebase_storage.dart'; // محرك بلازا الجديد
+import 'dart:io';
 import 'dart:convert';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
 import '../pages/products_report_page.dart';
-import 'excel_import_service.dart'; // استيراد الخدمة الجديدة
+import 'excel_import_service.dart';
 
 class ProductTab extends StatefulWidget {
   const ProductTab({super.key});
@@ -32,9 +33,6 @@ class _ProductTabState extends State<ProductTab> {
   List<Map<String, dynamic>> unitsWithFactors = [];
   bool _isLoading = false;
 
-  final String cloudName = "dgmmx6jbu";
-  final String uploadPreset = "commerce";
-
   Future<void> _pickImage(int index) async {
     final picker = ImagePicker();
     final image = await picker.pickImage(source: ImageSource.gallery);
@@ -54,31 +52,39 @@ class _ProductTabState extends State<ProductTab> {
     }
   }
 
-  // الرفع اليدوي - بسيط ومضمون للـ Unsigned
-  Future<Map<String, String>?> _uploadSingleImage(XFile xFile) async {
+  // 🚀 محرك رفع الصور المتعددة لـ Firebase Storage
+  Future<Map<String, String>?> _uploadToFirebase(XFile xFile) async {
     try {
-      final bytes = await xFile.readAsBytes();
-      final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
-      final request = http.MultipartRequest('POST', url)
-        ..fields['upload_preset'] = uploadPreset
-        ..fields['folder'] = 'productImages'
-        ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: xFile.name));
+      String fileName = 'productImages/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
+      Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      final response = await request.send();
-      if (response.statusCode == 200) {
-        final data = jsonDecode(await response.stream.bytesToString());
-        return {'url': data['secure_url'], 'public_id': data['public_id']};
+      SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
+      
+      UploadTask uploadTask;
+      if (Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS) {
+        uploadTask = storageRef.putFile(File(xFile.path), metadata);
+      } else {
+        final bytes = await xFile.readAsBytes();
+        uploadTask = storageRef.putData(bytes, metadata);
       }
+
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      return {
+        'url': downloadUrl,
+        'public_id': fileName // نستخدم المسار لسهولة الحذف لاحقاً
+      };
     } catch (e) {
-      debugPrint("Upload Error: $e");
+      debugPrint("Firebase Storage Upload Error: $e");
+      return null;
     }
-    return null;
   }
 
   Future<void> _saveProduct() async {
     if (_nameController.text.isEmpty || selectedMainId == null || selectedSubId == null ||
         selectedManufacturerId == null || selectedImages[0] == null || unitsWithFactors.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("يرجى إكمال كافة البيانات")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("يرجى إكمال كافة البيانات (الاسم، الأقسام، الصورة الأولى، والوحدات)")));
       return;
     }
 
@@ -89,7 +95,7 @@ class _ProductTabState extends State<ProductTab> {
 
       for (var img in selectedImages) {
         if (img != null) {
-          final result = await _uploadSingleImage(img);
+          final result = await _uploadToFirebase(img);
           if (result != null) {
             imageUrls.add(result['url']!);
             imagePublicIds.add(result['public_id']!);
@@ -114,27 +120,23 @@ class _ProductTabState extends State<ProductTab> {
       });
 
       _resetForm();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("تم إضافة المنتج بنجاح")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("تم إضافة المنتج بنجاح بنظام بلازا")));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("خطأ أثناء الحفظ: $e")));
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  // دالة الاستيراد الذكية الجديدة
-    // استبدل الدالة القديمة بهذه الدالة تماماً
   Future<void> _importExcelWithImages() async {
-    // 1. اختيار ملف الإكسل
     FilePickerResult? excelResult = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xlsx'],
     );
     if (excelResult == null) return;
 
-    // 2. اختيار مجلد الصور
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("الآن اختر جميع صور المنتجات من الاستوديو"))
-    );
-    
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("الآن اختر جميع صور المنتجات من الاستوديو")));
+
     FilePickerResult? imagesResult = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: true,
@@ -142,27 +144,19 @@ class _ProductTabState extends State<ProductTab> {
     if (imagesResult == null) return;
 
     setState(() => _isLoading = true);
-
     try {
-      // ✅ المناداة الصحيحة المتوافقة مع التعديل الأخير في الـ Service
       await ExcelImportService.importWithImages(
-        context: context, // بعتنا الكونتيكست للرسايل
+        context: context,
         excelFile: excelResult.files.first,
         imageFiles: imagesResult.files,
       );
-      
-      // نرجع نحدث الصفحة بعد الاستيراد
-      setState(() {}); 
-      
+      setState(() {});
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("خطأ أثناء الاستيراد: $e"))
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("خطأ أثناء الاستيراد: $e")));
     } finally {
       setState(() => _isLoading = false);
     }
   }
-
 
   void _resetForm() {
     _nameController.clear();
@@ -187,7 +181,6 @@ class _ProductTabState extends State<ProductTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // زرار الكتالوج
           InkWell(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProductsReportPage())),
             child: Container(
@@ -203,7 +196,6 @@ class _ProductTabState extends State<ProductTab> {
             ),
           ),
           const SizedBox(height: 10),
-          // الزرار العبقري الجديد
           ElevatedButton.icon(
             onPressed: _isLoading ? null : _importExcelWithImages,
             icon: const Icon(Icons.auto_awesome, color: Colors.white),
@@ -228,6 +220,7 @@ class _ProductTabState extends State<ProductTab> {
                 selectedMainId = val;
                 selectedSubId = null;
               }),
+              decoration: const InputDecoration(border: OutlineInputBorder()),
             ),
           ),
           const SizedBox(height: 10),
@@ -240,6 +233,7 @@ class _ProductTabState extends State<ProductTab> {
                 isExpanded: true,
                 items: snapshot.data?.docs.map((doc) => DropdownMenuItem(value: doc.id, child: Text(doc['name']))).toList(),
                 onChanged: (val) => setState(() => selectedSubId = val),
+                decoration: const InputDecoration(border: OutlineInputBorder()),
               ),
             ),
           const SizedBox(height: 10),
@@ -251,6 +245,7 @@ class _ProductTabState extends State<ProductTab> {
               isExpanded: true,
               items: snapshot.data?.docs.map((doc) => DropdownMenuItem(value: doc.id, child: Text(doc['name']))).toList(),
               onChanged: (val) => setState(() => selectedManufacturerId = val),
+              decoration: const InputDecoration(border: OutlineInputBorder()),
             ),
           ),
           const SizedBox(height: 10),
@@ -266,7 +261,9 @@ class _ProductTabState extends State<ProductTab> {
               onTap: () => _pickImage(index),
               child: Container(
                 decoration: BoxDecoration(border: Border.all(color: index == 0 ? Colors.blue : Colors.grey), borderRadius: BorderRadius.circular(8)),
-                child: selectedImages[index] == null ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.add_a_photo), Text("صورة ${index + 1}")]) : ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(selectedImages[index]!.path, fit: BoxFit.cover)),
+                child: selectedImages[index] == null 
+                  ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.add_a_photo), Text("صورة ${index + 1}")]) 
+                  : ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(File(selectedImages[index]!.path), fit: BoxFit.cover)),
               ),
             ),
           ),
