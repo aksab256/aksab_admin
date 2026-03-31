@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart'; // البديل الآمن والسرير
-import 'dart:io' as io; // للتعامل مع الملفات محلياً قبل الرفع
+import 'package:firebase_storage/firebase_storage.dart'; 
+import 'dart:io' as io; 
 
 class MainCategoryTab extends StatefulWidget {
   const MainCategoryTab({super.key});
@@ -37,8 +37,8 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
   void _prepareUpdate(DocumentSnapshot doc) {
     setState(() {
       _editingDocId = doc.id;
-      _nameController.text = doc['name'];
-      _orderController.text = doc['order'].toString();
+      _nameController.text = doc['name'] ?? "";
+      _orderController.text = (doc['order'] ?? 0).toString();
       _existingImageUrl = doc['imageUrl'];
       _selectedImage = null;
 
@@ -78,35 +78,28 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
     );
   }
 
-  // 🚀 المحرك الجديد لرفع الصور على سيرفرات بلازا (Firebase Storage)
+  // 🚀 المحرك الموحد: يعتمد على الـ Bytes لضمان التوافق مع الويب والموبايل
   Future<Map<String, String>?> _uploadToFirebase(XFile xFile) async {
     try {
-      // حفظ المسار بشكل منظم لسهولة الإدارة مستقبلاً
       String fileName = 'main_categories/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
       Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      // الرفع مع تحديد نوع الملف (Metadata) لتحسين سرعة العرض
+      // قراءة الملف كـ Bytes لضمان عمله على الويب والموبايل فوراً
+      final bytes = await xFile.readAsBytes();
       SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
-      
-      UploadTask uploadTask;
-      if (Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS) {
-        uploadTask = storageRef.putFile(io.File(xFile.path), metadata);
-      } else {
-        // لدعم الويب إذا كنت تستخدم لوحة تحكم ويب
-        final bytes = await xFile.readAsBytes();
-        uploadTask = storageRef.putData(bytes, metadata);
-      }
+
+      // استخدام putData بدلاً من putFile لتجنب مشاكل dart:io في الويب
+      UploadTask uploadTask = storageRef.putData(bytes, metadata);
 
       TaskSnapshot snapshot = await uploadTask;
       String downloadUrl = await snapshot.ref.getDownloadURL();
 
-      // بنرجع الرابط والـ ID بنفس المفاتيح القديمة عشان الكود ميتغيرش
       return {
         'url': downloadUrl,
-        'public_id': fileName // هنستخدم المسار كـ ID بدلاً من نظام كلوديناري
+        'public_id': fileName 
       };
     } catch (e) {
-      debugPrint("Upload Error: $e");
+      debugPrint("❌ Upload Error: $e");
       return null;
     }
   }
@@ -127,6 +120,8 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
         if (uploadResult != null) {
           finalImageUrl = uploadResult['url'];
           finalPublicId = uploadResult['public_id'];
+        } else {
+          throw Exception("فشل رفع الصورة للسيرفر");
         }
       }
 
@@ -150,6 +145,8 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
         _showSuccessDialog("تم إضافة القسم بنجاح");
         _resetForm();
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("خطأ: ${e.toString()}")));
     } finally {
       setState(() => _isLoading = false);
     }
@@ -184,7 +181,9 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: _selectedImage != null
-                          ? Image.file(io.File(_selectedImage!.path), fit: BoxFit.cover)
+                          ? (kIsWeb 
+                              ? Image.network(_selectedImage!.path, fit: BoxFit.cover)
+                              : Image.file(io.File(_selectedImage!.path), fit: BoxFit.cover))
                           : Image.network(_existingImageUrl!, fit: BoxFit.cover),
                     ),
             ),
@@ -227,9 +226,19 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
                   var doc = snapshot.data!.docs[index];
                   final data = doc.data() as Map<String, dynamic>;
                   bool isPromo = (data.containsKey('offerBehavior') && data['offerBehavior'] == "supermarket_offers");
+                  
+                  // حماية ضد الـ Null في روابط الصور
+                  String? imgUrl = data['imageUrl'];
+
                   return ListTile(
-                    leading: CircleAvatar(backgroundImage: NetworkImage(doc['imageUrl'])),
-                    title: Text(doc['name']),
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.grey[200],
+                      backgroundImage: (imgUrl != null && imgUrl.isNotEmpty) 
+                          ? NetworkImage(imgUrl) 
+                          : null,
+                      child: (imgUrl == null || imgUrl.isEmpty) ? const Icon(Icons.image) : null,
+                    ),
+                    title: Text(doc['name'] ?? "بدون اسم"),
                     subtitle: Text("ترتيب: ${doc['order']} ${isPromo ? ' | 🎁 عرض' : ''}"),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -258,15 +267,12 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("إلغاء")),
           TextButton(
             onPressed: () async {
-              // حذف البيانات من Firestore
               await FirebaseFirestore.instance.collection('mainCategory').doc(id).delete();
-              
-              // 🛡️ الميزة الجديدة: حذف الصورة من Storage لتوفير المساحة والتكلفة
-              if (storagePath != null && storagePath.contains('main_categories/')) {
+              if (storagePath != null && storagePath.isNotEmpty) {
                 try {
                   await FirebaseStorage.instance.ref().child(storagePath).delete();
                 } catch (e) {
-                  debugPrint("Error deleting image from storage: $e");
+                  debugPrint("Error deleting image: $e");
                 }
               }
               Navigator.pop(ctx);
