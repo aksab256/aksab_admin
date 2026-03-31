@@ -1,43 +1,43 @@
-import 'dart:convert';
 import 'dart:async';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart'; // الضيف الجديد
 
 class CloudinaryService {
-  // 💡 ضع قيمك هنا لتجنب الخطأ
+  // القيم دي هنخليها عشان لو فيه ملفات تانية بتناديها ما تضربش Error
   static const String uploadPreset = "commerce"; 
   static const String cloudName = "dgmmx6jbu";
 
   static Future<Map<String, String>?> uploadImage(XFile xFile) async {
     try {
-      final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
+      print("🚀 تحويل الرفع من كلوديناري إلى بلازا ستورج...");
       
-      // في الويب نستخدم readAsBytes بدلاً من Path
-      final bytes = await xFile.readAsBytes();
-      
-      var request = http.MultipartRequest('POST', url)
-        ..fields['upload_preset'] = uploadPreset
-        ..files.add(http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: xFile.name,
-        ));
+      // 1. تجهيز المسار واسم الملف
+      String fileName = 'uploads/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
+      Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      var response = await request.send();
-      var responseData = await response.stream.bytesToString();
-      
-      if (response.statusCode == 200) {
-        var json = jsonDecode(responseData);
-        return {
-          "url": json['secure_url'],
-          "publicId": json['public_id']
-        };
-      } else {
-        print("Cloudinary Error: $responseData");
-        return null;
-      }
+      // 2. قراءة الملف كـ Bytes (مناسب للويب والموبايل)
+      final bytes = await xFile.readAsBytes();
+
+      // 3. الرفع الفعلي لـ Firebase
+      UploadTask uploadTask = storageRef.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+
+      // 4. انتظار الإتمام والحصول على الرابط
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      print("✅ تم الرفع بنجاح لـ بلازا: $downloadUrl");
+
+      // 5. نرجع الخريطة بنفس الشكل القديم عشان اللي بينادي ما يحسش بفرق
+      return {
+        "url": downloadUrl,
+        "publicId": fileName // بنستخدم المسار كـ ID بديل
+      };
+
     } catch (e) {
-      print("Upload Error: $e");
+      print("❌ خطأ في رفع بلازا: $e");
       return null;
     }
   }
