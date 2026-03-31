@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart'; // 🚀 بديل Cloudinary
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 
 class PromoNotificationsScreen extends StatefulWidget {
   const PromoNotificationsScreen({super.key});
@@ -13,21 +11,19 @@ class PromoNotificationsScreen extends StatefulWidget {
 }
 
 class _PromoNotificationsScreenState extends State<PromoNotificationsScreen> {
-  // 🎯 تم الاستغناء عن روابط AWS Lambda نهائياً
-  // الـ Topics المعتمدة في مشروع "رابية أحلى"
-  final List<String> _topics = ['all_users', 'retailers', 'consumers', 'drivers', 'test_topic'];
+  final CollectionReference _topicsRef = FirebaseFirestore.instance.collection('notification_topics');
   
   final TextEditingController _titleCtrl = TextEditingController(text: "أكسب 💰");
   final TextEditingController _msgCtrl = TextEditingController();
   final TextEditingController _imgUrlCtrl = TextEditingController();
 
-  String? _selectedTopic = 'all_users';
+  String? _selectedTopic; 
   String _selectedSound = 'default';
   String _targetScreen = 'Home';
   bool _isLoading = false;
   bool _isUploading = false;
 
-  // 🎯 دالة الرفع المعتمدة لـ Firebase Storage (نفس سيستم البانرات)
+  // 1. رفع الصور لـ Firebase Storage (بلازا)
   Future<void> _pickAndUploadImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -35,77 +31,56 @@ class _PromoNotificationsScreenState extends State<PromoNotificationsScreen> {
     if (pickedFile != null) {
       setState(() => _isUploading = true);
       try {
-        String fileName = 'promo_notifs/${DateTime.now().millisecondsSinceEpoch}_${pickedFile.name}';
+        String fileName = 'promo_notifs/${DateTime.now().millisecondsSinceEpoch}.jpg';
         Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
-        
-        final bytes = await pickedFile.readAsBytes();
-        SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
-
-        UploadTask uploadTask = storageRef.putData(bytes, metadata);
-        TaskSnapshot snapshot = await uploadTask;
-        String downloadUrl = await snapshot.ref.getDownloadURL();
-
-        setState(() {
-          _imgUrlCtrl.text = downloadUrl;
-        });
-        _showSnackBar("تم رفع الصورة لبلازا بنجاح", Colors.green);
+        await storageRef.putData(await pickedFile.readAsBytes(), SettableMetadata(contentType: 'image/jpeg'));
+        String url = await storageRef.getDownloadURL();
+        setState(() => _imgUrlCtrl.text = url);
+        _showSnackBar("تم رفع الصورة بنجاح", Colors.green);
       } catch (e) {
-        _showSnackBar("خطأ أثناء الرفع لـ Firebase", Colors.red);
+        _showSnackBar("خطأ في الرفع: $e", Colors.red);
       } finally {
         setState(() => _isUploading = false);
       }
     }
   }
 
-  // 🎯 دالة الإرسال المباشر (تخطي AWS)
-  // ملاحظة: يفضل مستقبلاً وضع هذه الدالة في Cloud Function لزيادة الأمان
+  // 2. إرسال البيانات للـ Firestore (الـ Trigger)
   Future<void> _sendNotification() async {
     if (_selectedTopic == null || _msgCtrl.text.isEmpty) {
-      _showSnackBar("يرجى كتابة نص الرسالة واختيار الجمهور", Colors.orange);
+      _showSnackBar("اكمل البيانات أولاً", Colors.orange);
       return;
     }
 
     setState(() => _isLoading = true);
-
     try {
-      // هنا بنسجل الإشعار في الـ Firestore كـ Log للرجوع إليه (أفضل من AWS)
-      await FirebaseFirestore.instance.collection('notifications_history').add({
-        'topic': _selectedTopic,
+      await FirebaseFirestore.instance.collection('push_notifications').add({
+        'topic': _selectedTopic, // سيتم استخدامه في Cloud Function
         'title': _titleCtrl.text,
         'message': _msgCtrl.text,
         'image': _imgUrlCtrl.text,
         'sound': _selectedSound,
-        'targetScreen': _targetScreen,
-        'sentAt': FieldValue.serverTimestamp(),
+        'data': {'screen': _targetScreen},
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // ⚠️ تنبيه: لإرسال الإشعار فعلياً بدون AWS، ستحتاج لاستخدام FCM v1 API
-      // حالياً، سنقوم بحفظ الطلب في Firestore وستقوم وظيفة (Background Worker) بالإرسال
-      // أو يمكننا استخدام مكتبة مباشرة إذا كنت تملك مفتاح الخدمة (Service Account)
-      
-      _showSnackBar("تم جدولة الإشعار للإرسال بنجاح!", Colors.green);
+      _showSnackBar("جاري معالجة الإرسال عبر السحابة", Colors.green);
       _msgCtrl.clear();
       _imgUrlCtrl.clear();
     } catch (e) {
-      _showSnackBar("حدث خطأ في النظام"، Colors.red);
+      _showSnackBar("خطأ في النظام: $e", Colors.red);
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  void _showSnackBar(String msg, Color color) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg, style: const TextStyle(fontFamily: 'Cairo')), backgroundColor: color)
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFEEF2F5),
+      backgroundColor: const Color(0xFFF4F7F9),
       appBar: AppBar(
-        title: const Text("إرسال إشعار ترويجي (بلازا)", style: TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+        title: const Text("مركز الإشعارات الذكي", style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1A2C3D),
         foregroundColor: Colors.white,
         centerTitle: true,
@@ -114,118 +89,83 @@ class _PromoNotificationsScreenState extends State<PromoNotificationsScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildLabel("اختر الجمهور المستهدف:"),
-                  DropdownButtonFormField<String>(
-                    value: _selectedTopic,
-                    items: _topics.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
-                    onChanged: (val) => setState(() => _selectedTopic = val),
-                    decoration: _inputDecoration(),
-                  ),
-                  const SizedBox(height: 15),
-                  _buildLabel("عنوان الإشعار:"),
-                  TextField(controller: _titleCtrl, decoration: _inputDecoration()),
-                  const SizedBox(height: 15),
-                  _buildLabel("نص الرسالة:"),
-                  TextField(controller: _msgCtrl, maxLines: 3, decoration: _inputDecoration(hint: "اكتب رسالتك هنا...")),
-                  const SizedBox(height: 15),
-                  _buildLabel("صورة الإشعار:"),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _imgUrlCtrl,
-                          decoration: _inputDecoration(hint: "رابط الصورة من بلازا...")
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      ElevatedButton(
-                        onPressed: _isUploading ? null : _pickAndUploadImage,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueGrey,
-                          padding: const EdgeInsets.all(12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                        ),
-                        child: _isUploading
-                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Icon(Icons.cloud_upload, color: Colors.white),
-                      )
-                    ],
-                  ),
-                  const SizedBox(height: 15),
-                  _buildLabel("اختر النغمة المتكلمة:"),
-                  DropdownButtonFormField<String>(
-                    value: _selectedSound,
-                    items: const [
-                      DropdownMenuItem(value: 'default', child: Text("الافتراضية")),
-                      DropdownMenuItem(value: 'order_new', child: Text("نغمة: طلب جديد")),
-                      DropdownMenuItem(value: 'order_cancel', child: Text("نغمة: إلغاء طلب")),
-                      DropdownMenuItem(value: 'promo_msg', child: Text("نغمة: عرض ترويجي")),
-                      DropdownMenuItem(value: 'wallet_add', child: Text("نغمة: شحن محفظة")),
-                      DropdownMenuItem(value: 'urgent_alert', child: Text("نغمة: تنبيه عاجل")),
-                    ],
-                    onChanged: (val) => setState(() => _selectedSound = val!),
-                    decoration: _inputDecoration(),
-                  ),
-                  const SizedBox(height: 15),
-                  _buildLabel("عند الضغط يفتح صفحة:"),
-                  DropdownButtonFormField<String>(
-                    value: _targetScreen,
-                    items: const [
-                      DropdownMenuItem(value: 'Home', child: Text("الرئيسية")),
-                      DropdownMenuItem(value: 'Orders', child: Text("قائمة الطلبات")),
-                      DropdownMenuItem(value: 'Wallet', child: Text("المحفظة")),
-                      DropdownMenuItem(value: 'Offers', child: Text("صفحة العروض")),
-                    ],
-                    onChanged: (val) => setState(() => _targetScreen = val!),
-                    decoration: _inputDecoration(),
-                  ),
-                  const SizedBox(height: 30),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _sendNotification,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurple,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text("إرسال عبر بلازا", style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildMainCard(),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildMainCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildLabel("الجمهور المستهدف (من السحابة):"),
+          StreamBuilder<QuerySnapshot>(
+            stream: _topicsRef.snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const LinearProgressIndicator();
+              return DropdownButtonFormField<String>(
+                value: _selectedTopic,
+                hint: const Text("اختر المجموعة المستهدفة"),
+                items: snapshot.data!.docs.map((doc) {
+                  return DropdownMenuItem(value: doc.id, child: Text(doc['name']));
+                }).toList(),
+                onChanged: (val) => setState(() => _selectedTopic = val),
+                decoration: _inputDecoration(),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          _buildLabel("محتوى الإشعار:"),
+          TextField(controller: _titleCtrl, decoration: _inputDecoration(hint: "العنوان")),
+          const SizedBox(height: 10),
+          TextField(controller: _msgCtrl, maxLines: 3, decoration: _inputDecoration(hint: "نص الرسالة...")),
+          const SizedBox(height: 20),
+          _buildLabel("الوسائط (Firebase Storage):"),
+          Row(
+            children: [
+              Expanded(child: TextField(controller: _imgUrlCtrl, decoration: _inputDecoration(hint: "رابط الصورة"))),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                onPressed: _isUploading ? null : _pickAndUploadImage,
+                icon: _isUploading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.add_a_photo),
+              ),
+            ],
+          ),
+          const SizedBox(height: 30),
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton(
+              onPressed: _isLoading ? null : _sendNotification,
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1A2C3D), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("إرسال الإشعار الآن", style: TextStyle(color: Colors.white, fontSize: 18, fontFamily: 'Cairo')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   InputDecoration _inputDecoration({String? hint}) => InputDecoration(
     hintText: hint,
-    fillColor: const Color(0xFFF9F9F9),
     filled: true,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+    fillColor: Colors.grey[50],
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
-    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: Colors.grey.shade300)),
-    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.deepPurple, width: 2)),
   );
 
-  Widget _buildLabel(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8, right: 5),
-    child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo', fontSize: 14)),
-  );
+  Widget _buildLabel(String text) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo')));
+
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg, style: const TextStyle(fontFamily: 'Cairo')), backgroundColor: color));
+  }
 }
 
