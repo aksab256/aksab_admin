@@ -78,17 +78,23 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
     );
   }
 
-  // 🚀 المحرك الموحد لرفع الصور (Bytes) لضمان التوافق مع الويب والموبايل
+  // 🚀 المحرك الموحد والآمن: يعتمد على الـ Bytes مع اسم ملف نظيف
   Future<Map<String, String>?> _uploadToFirebase(XFile xFile) async {
     try {
-      String fileName = 'main_categories/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
+      // استخدام Timestamp كاسم للملف لتجنب مشاكل الرموز والمسافات في الويب
+      String fileName = 'main_categories/${DateTime.now().millisecondsSinceEpoch}.jpg';
       Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      // قراءة الملف كـ Bytes (حل سحري للويب والموبايل)
+      // قراءة الملف كـ Bytes لضمان عمله على الويب والموبايل
       final bytes = await xFile.readAsBytes();
-      SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
+      
+      // تأمين نوع الملف (Metadata) لضمان القبول من السيرفر
+      SettableMetadata metadata = SettableMetadata(
+        contentType: 'image/jpeg',
+        customMetadata: {'origin': 'aksab_admin_web'},
+      );
 
-      // استخدام putData بدلاً من putFile
+      // الرفع الآمن باستخدام putData
       UploadTask uploadTask = storageRef.putData(bytes, metadata);
 
       TaskSnapshot snapshot = await uploadTask;
@@ -99,7 +105,7 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
         'public_id': fileName
       };
     } catch (e) {
-      debugPrint("❌ Upload Error: $e");
+      debugPrint("❌ Detailed Upload Error: $e");
       return null;
     }
   }
@@ -121,7 +127,7 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
           finalImageUrl = uploadResult['url'];
           finalPublicId = uploadResult['public_id'];
         } else {
-          throw Exception("فشل رفع الصورة للسيرفر");
+          throw Exception("فشل رفع الصورة.. تأكد من اتصال الإنترنت");
         }
       }
 
@@ -184,9 +190,7 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
                           ? (kIsWeb
                               ? Image.network(_selectedImage!.path, fit: BoxFit.cover)
                               : Image.file(io.File(_selectedImage!.path), fit: BoxFit.cover))
-                          : (_existingImageUrl != null 
-                              ? Image.network(_existingImageUrl!, fit: BoxFit.cover) 
-                              : const SizedBox.shrink()),
+                          : Image.network(_existingImageUrl!, fit: BoxFit.cover),
                     ),
             ),
           ),
