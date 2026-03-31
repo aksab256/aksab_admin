@@ -1,8 +1,10 @@
+// المسار: lib/screens/marketing/tabs/consumer_banners_tab.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart'; // 🚀 المحرك المعتمد الجديد
+import 'dart:io' as io;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ConsumerBannersTab extends StatefulWidget {
   const ConsumerBannersTab({super.key});
@@ -23,22 +25,26 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
   XFile? _selectedImage;
   bool _isUploading = false;
 
-  final String cloudinaryUrl = 'https://api.cloudinary.com/v1_1/dgmmx6jbu/image/upload';
-  final String uploadPreset = 'commerce';
-
-  Future<String?> _uploadToCloudinary() async {
+  // 🎯 الطريقة المعتمدة للرفع (Firebase Storage + Bytes)
+  Future<Map<String, String>?> _uploadToFirebase() async {
     if (_selectedImage == null) return null;
     try {
-      var request = http.MultipartRequest('POST', Uri.parse(cloudinaryUrl));
-      request.fields['upload_preset'] = uploadPreset;
-      var bytes = await _selectedImage!.readAsBytes();
-      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'banner.jpg'));
-      var response = await request.send();
-      var responseData = await response.stream.toBytes();
-      var jsonRes = jsonDecode(utf8.decode(responseData));
-      return jsonRes['secure_url'];
+      String fileName = 'banners/consumer/${DateTime.now().millisecondsSinceEpoch}_banner.jpg';
+      Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
+
+      final bytes = await _selectedImage!.readAsBytes();
+      SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
+
+      UploadTask uploadTask = storageRef.putData(bytes, metadata);
+      TaskSnapshot snapshot = await uploadTask;
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      return {
+        'url': downloadUrl,
+        'public_id': fileName
+      };
     } catch (e) {
-      debugPrint("Cloudinary Error: $e");
+      debugPrint("Firebase Storage Error: $e");
       return null;
     }
   }
@@ -50,12 +56,14 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
     }
     setState(() => _isUploading = true);
     try {
-      String? imageUrl = await _uploadToCloudinary();
-      if (imageUrl != null) {
-        // 🎯 يتم الإرسال لمجموعة البانرات الأساسية
+      final uploadResult = await _uploadToFirebase();
+      
+      if (uploadResult != null) {
+        // 🎯 الحفاظ على نفس أسماء الحقول بالنص لضمان عمل تطبيق المستهلك
         await FirebaseFirestore.instance.collection('consumerBanners').add({
-          'name': _nameController.text,
-          'imageUrl': imageUrl,
+          'name': _nameController.text.trim(),
+          'imageUrl': uploadResult['url'],
+          'imagePublicId': uploadResult['public_id'], // للحذف لاحقاً
           'linkType': _linkType,
           'targetId': _targetId ?? '',
           'targetAudience': _targetAudience,
@@ -134,7 +142,10 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
                   DropdownMenuItem(value: 'RETAILER', child: Text("سوبر ماركت (توصيل)")),
                   DropdownMenuItem(value: 'SELLER', child: Text("تاجر (ملابس/أخرى)")),
                 ],
-                onChanged: (v) => setState(() { _linkType = v!; _targetId = null; }),
+                onChanged: (v) => setState(() {
+                  _linkType = v!;
+                  _targetId = null;
+                }),
               ),
               if (_linkType != 'NONE') ...[
                 const SizedBox(height: 15),
@@ -153,9 +164,9 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
                 child: ElevatedButton(
                   onPressed: _isUploading ? null : _submitForm,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-                  child: _isUploading 
-                    ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("حفظ البانر", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  child: _isUploading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text("حفظ البانر", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -169,7 +180,6 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
     String collection;
     String nameField = 'name';
 
-    // 🎯 تحديد المجموعة والحقل بناءً على نوع الرابط
     switch (_linkType) {
       case 'CATEGORY':
         collection = 'mainCategory';
@@ -183,7 +193,7 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
         break;
       case 'SELLER':
         collection = 'sellers';
-        nameField = 'merchantName'; // تم التعديل بناءً على طلبك
+        nameField = 'merchantName';
         break;
       default:
         return const SizedBox.shrink();
@@ -193,7 +203,7 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
       stream: FirebaseFirestore.instance.collection(collection).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const LinearProgressIndicator();
-        
+
         var docs = snapshot.data!.docs;
         if (docs.isEmpty) return Text("لا توجد بيانات في $collection");
 
@@ -225,13 +235,19 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
         height: 150,
         width: double.infinity,
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey),
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.grey[50]
-        ),
+            border: Border.all(color: Colors.grey),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.grey[50]),
         child: _selectedImage == null
-            ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.add_photo_alternate, size: 40, color: Colors.grey), Text("اختر صورة البانر")])
-            : Image.network(_selectedImage!.path, fit: BoxFit.contain),
+            ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.add_photo_alternate, size: 40, color: Colors.grey),
+                Text("اختر صورة البانر")
+              ])
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: kIsWeb
+                    ? Image.network(_selectedImage!.path, fit: BoxFit.contain)
+                    : Image.file(io.File(_selectedImage!.path), fit: BoxFit.contain)),
       ),
     );
   }
@@ -259,7 +275,7 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
                 subtitle: Text("الوجهة: ${data['linkType']}"),
                 trailing: IconButton(
                   icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () => _deleteBanner(doc.id),
+                  onPressed: () => _deleteBanner(doc.id, data['imagePublicId']),
                 ),
               ),
             );
@@ -269,7 +285,7 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
     );
   }
 
-  void _deleteBanner(String id) async {
+  void _deleteBanner(String id, String? storagePath) async {
     bool? confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -283,6 +299,13 @@ class _ConsumerBannersTabState extends State<ConsumerBannersTab> {
     );
     if (confirm == true) {
       await FirebaseFirestore.instance.collection('consumerBanners').doc(id).delete();
+      if (storagePath != null) {
+        try {
+          await FirebaseStorage.instance.ref().child(storagePath).delete();
+        } catch (e) {
+          debugPrint("Delete error: $e");
+        }
+      }
     }
   }
 }
