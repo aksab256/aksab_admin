@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart'; 
-import 'dart:io' as io; 
+import 'package:firebase_storage/firebase_storage.dart';
+import 'dart:io' as io;
 
 class MainCategoryTab extends StatefulWidget {
   const MainCategoryTab({super.key});
@@ -78,17 +78,17 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
     );
   }
 
-  // 🚀 المحرك الموحد: يعتمد على الـ Bytes لضمان التوافق مع الويب والموبايل
+  // 🚀 المحرك الموحد لرفع الصور (Bytes) لضمان التوافق مع الويب والموبايل
   Future<Map<String, String>?> _uploadToFirebase(XFile xFile) async {
     try {
       String fileName = 'main_categories/${DateTime.now().millisecondsSinceEpoch}_${xFile.name}';
       Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
-      // قراءة الملف كـ Bytes لضمان عمله على الويب والموبايل فوراً
+      // قراءة الملف كـ Bytes (حل سحري للويب والموبايل)
       final bytes = await xFile.readAsBytes();
       SettableMetadata metadata = SettableMetadata(contentType: 'image/jpeg');
 
-      // استخدام putData بدلاً من putFile لتجنب مشاكل dart:io في الويب
+      // استخدام putData بدلاً من putFile
       UploadTask uploadTask = storageRef.putData(bytes, metadata);
 
       TaskSnapshot snapshot = await uploadTask;
@@ -96,7 +96,7 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
 
       return {
         'url': downloadUrl,
-        'public_id': fileName 
+        'public_id': fileName
       };
     } catch (e) {
       debugPrint("❌ Upload Error: $e");
@@ -181,10 +181,12 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
                   : ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: _selectedImage != null
-                          ? (kIsWeb 
+                          ? (kIsWeb
                               ? Image.network(_selectedImage!.path, fit: BoxFit.cover)
                               : Image.file(io.File(_selectedImage!.path), fit: BoxFit.cover))
-                          : Image.network(_existingImageUrl!, fit: BoxFit.cover),
+                          : (_existingImageUrl != null 
+                              ? Image.network(_existingImageUrl!, fit: BoxFit.cover) 
+                              : const SizedBox.shrink()),
                     ),
             ),
           ),
@@ -226,15 +228,13 @@ class _MainCategoryTabState extends State<MainCategoryTab> {
                   var doc = snapshot.data!.docs[index];
                   final data = doc.data() as Map<String, dynamic>;
                   bool isPromo = (data.containsKey('offerBehavior') && data['offerBehavior'] == "supermarket_offers");
-                  
-                  // حماية ضد الـ Null في روابط الصور
                   String? imgUrl = data['imageUrl'];
 
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Colors.grey[200],
-                      backgroundImage: (imgUrl != null && imgUrl.isNotEmpty) 
-                          ? NetworkImage(imgUrl) 
+                      backgroundImage: (imgUrl != null && imgUrl.isNotEmpty)
+                          ? NetworkImage(imgUrl)
                           : null,
                       child: (imgUrl == null || imgUrl.isEmpty) ? const Icon(Icons.image) : null,
                     ),
