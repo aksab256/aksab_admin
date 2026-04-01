@@ -5,7 +5,7 @@ const axios = require('axios');
 // نستخدم الدالة المتاحة فعلياً في ملف الـ services
 //const { sendOrderNotifications } = require("../../services/notifications_service");
 
-const SECRET_KEY = "egy_sk_test_c4811a307a9c6fcf3b98d267de789f913e208a19b90cd84ea82a739984643487";
+const SECRET_KEY = "egy_sk_test_fake_key_key_for_testing_purposes_only";
 const PUBLIC_KEY = "egy_pk_test_5jCU1CY5YHrZ2oymVSAJMgWA0zgasnpz";
 const INTEGRATION_ID = 5476155;
 
