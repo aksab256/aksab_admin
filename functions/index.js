@@ -1,55 +1,39 @@
+const { onCall } = require("firebase-functions/v2/https");
+const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 
-// 🛡️ تهيئة ذاتية للملف لضمان عدم الاعتماد على ملف خارجي
+// 1. تهيئة الفايربيز (مرة واحدة وشاملة)
 if (admin.apps.length === 0) {
     admin.initializeApp();
 }
 const db = admin.firestore();
 
-/**
- * دالة جلب العروض النشطة (Gift Promotions)
- */
-async function getActivePromotions(db) {
-    try {
-        const snapshot = await db.collection("giftPromos")
-            .where("isActive", "==", true)
-            .get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (error) {
-        console.error("❌ Error fetching promotions:", error);
-        return [];
-    }
-}
+// إعدادات السيرفر
+setGlobalOptions({ region: "us-central1", memory: "256MiB" });
 
 /**
- * دالة منطق الهدايا (يمكن توسيعها مستقبلاً)
+ * 🎯 الجوهرة: orders_createSecureOrder
+ * المنطق بالكامل هنا لضمان النجاح 100% بدون ملفات خارجية
  */
-function applyPromotionsLogic(items, total, promotions, sellerId) {
-    return items; 
-}
-
-/**
- * 🎯 الدالة الرئيسية: تنفيذ "تأمين عهدة الطلب"
- * يتم استدعاؤها من index.js
- */
-exports.createOrderWithPromos = async (data, userIdFromAuth) => {
-    // استلام البيانات من طلب Flutter
+exports.orders_createSecureOrder = onCall(async (request) => {
+    const data = request.data;
+    const authUid = request.auth ? request.auth.uid : null;
+    
     const { ordersData } = data;
-    const userId = data.userId || userIdFromAuth;
+    const userId = data.userId || authUid;
     let cashbackToReserve = parseFloat(data.cashbackToReserve) || 0;
 
     if (!userId || !ordersData) {
-        throw new Error("بيانات الطلب أو معرف المستخدم ناقصة.");
+        throw new Error("بيانات الطلب ناقصة (Missing userId or ordersData)");
     }
 
-    const activePromotions = await getActivePromotions(db);
     const userRef = db.collection('users').doc(userId);
     const ledgerRef = db.collection('transactionsLedger');
     let successfulOrders = [];
 
     try {
         await db.runTransaction(async (transaction) => {
-            // أ. التحقق من رصيد الكاش باك (نقاط الأمان)
+            // أ. التحقق من رصيد الكاش باك
             const userDoc = await transaction.get(userRef);
             if (!userDoc.exists) throw new Error("USER_NOT_FOUND");
 
@@ -57,17 +41,16 @@ exports.createOrderWithPromos = async (data, userIdFromAuth) => {
             const currentCashback = userData.cashback || 0;
 
             if (currentCashback < cashbackToReserve) {
-                throw new Error("رصيد الكاش باك غير كافٍ لتأمين العهدة.");
+                throw new Error("INSUFFICIENT_CASHBACK");
             }
 
-            // ب. خصم من الكاش باك وحجز في "نقاط الأمان"
+            // ب. تأمين العهدة (خصم وحجز)
             if (cashbackToReserve > 0) {
                 transaction.update(userRef, {
                     cashback: admin.firestore.FieldValue.increment(-cashbackToReserve),
                     cashbackReserved: admin.firestore.FieldValue.increment(cashbackToReserve)
                 });
 
-                // ج. توثيق العملية في سجل العمليات (Ledger)
                 const newLedgerDoc = ledgerRef.doc();
                 transaction.set(newLedgerDoc, {
                     userId: userId,
@@ -75,26 +58,16 @@ exports.createOrderWithPromos = async (data, userIdFromAuth) => {
                     amount: cashbackToReserve,
                     status: 'RESERVED',
                     timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                    description: `تأمين عهدة طلب جديد - رقم الوثيقة: ${newLedgerDoc.id}`
+                    description: `تأمين عهدة لطلب جديد رقم ${newLedgerDoc.id}`
                 });
             }
 
-            // د. إنشاء مستندات الطلب لكل تاجر في السلة
+            // ج. إنشاء الطلبات
             for (const orderData of ordersData) {
-                const orderTotal = orderData.total || 0;
-
-                const itemsAfterPromotion = applyPromotionsLogic(
-                    orderData.items || [],
-                    orderTotal,
-                    activePromotions,
-                    orderData.sellerId
-                );
-
                 const orderRef = db.collection('orders').doc();
                 transaction.set(orderRef, {
                     ...orderData,
                     orderId: orderRef.id,
-                    items: itemsAfterPromotion,
                     buyerId: userId,
                     status: 'new-order',
                     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -111,9 +84,10 @@ exports.createOrderWithPromos = async (data, userIdFromAuth) => {
         };
 
     } catch (error) {
-        console.error("❌ Order Transaction Failed:", error.message);
-        // إلقاء الخطأ ليعود لـ Flutter بشكل صحيح
+        console.error("❌ Transaction Failed:", error.message);
         throw error;
     }
-};
+});
+
+// ملاحظة: باقي الدوال (Watcher, Finance) يمكن إضافتها لاحقاً بنفس الطريقة الموحدة.
 
