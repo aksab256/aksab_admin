@@ -1,17 +1,35 @@
 const { admin, db } = require("../../admin_init");
 
 /**
+ * دالة جلب العروض النشطة (Firestore Only)
+ */
+async function getActivePromotions(db) {
+    const snapshot = await db.collection("giftPromos")
+        .where("isActive", "==", true)
+        .get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+/**
+ * دالة تطبيق منطق الهدايا
+ */
+function applyPromotionsLogic(items, total, promotions, sellerId) {
+    // المنطق الحالي يرجع العناصر كما هي، ويمكنك إضافة شروط الهدايا هنا
+    return items; 
+}
+
+/**
  * دالة إنشاء الطلب وتطبيق الهدايا وخصم الكاش باك (كلها في Firestore)
  */
 exports.createOrderWithPromos = async (requestData, userId) => {
     const { ordersData } = requestData;
     let cashbackToReserve = parseFloat(requestData.cashbackToReserve) || 0;
 
-    // 1. جلب العروض النشطة (Firestore Only)
+    // 1. جلب العروض النشطة
     const activePromotions = await getActivePromotions(db);
 
     const userRef = db.collection('users').doc(userId);
-    const ledgerRef = db.collection('transactionsLedger'); // البديل لـ DynamoDB
+    const ledgerRef = db.collection('transactionsLedger');
     let successfulOrders = [];
 
     try {
@@ -34,7 +52,7 @@ exports.createOrderWithPromos = async (requestData, userId) => {
                     cashbackReserved: admin.firestore.FieldValue.increment(cashbackToReserve)
                 });
 
-                // ج. توثيق العملية في الـ Ledger (داخل نفس المعاملة!)
+                // ج. توثيق العملية في الـ Ledger
                 const newLedgerDoc = ledgerRef.doc();
                 transaction.set(newLedgerDoc, {
                     userId: userId,
@@ -42,14 +60,14 @@ exports.createOrderWithPromos = async (requestData, userId) => {
                     amount: cashbackToReserve,
                     status: 'RESERVED',
                     timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                    description: `حجز كاش باك لطلب جديد رقم ${newLedgerDoc.id}`
+                    description: `تأمين عهدة طلب جديد رقم ${newLedgerDoc.id}`
                 });
             }
 
             // د. معالجة الطلبات لكل تاجر
             for (const orderData of ordersData) {
                 const orderTotal = orderData.total || 0;
-                
+
                 // تطبيق منطق الهدايا
                 const itemsAfterPromotion = applyPromotionsLogic(
                     orderData.items || [],
@@ -84,10 +102,10 @@ exports.createOrderWithPromos = async (requestData, userId) => {
             }
         });
 
-        return { 
-            success: true, 
-            orderIds: successfulOrders, 
-            cashbackReserved: cashbackToReserve 
+        return {
+            success: true,
+            orderIds: successfulOrders,
+            cashbackReserved: cashbackToReserve
         };
 
     } catch (error) {
