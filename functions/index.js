@@ -1,22 +1,57 @@
-const admin = require("firebase-admin");
+/**
+ * ⚠️ ملاحظة للهندسة: مفيش أي Require لمكتبات تقيلة فوق خالص!
+ * الـ CLI هيقرأ الملف ده في أقل من ثانية بإذن الله.
+ */
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onCall } = require("firebase-functions/v2/https");
+const { setGlobalOptions } = require("firebase-functions/v2");
 
-// 1. Initialize Firebase Admin (مرة واحدة فقط للمشروع بالكامل)
-if (admin.apps.length === 0) {
-    admin.initializeApp();
-}
+// إعدادات الرام والمنطقة
+setGlobalOptions({ region: "us-central1", memory: "256MiB" });
 
-// 2. استيراد ملفات المنطق (Logic Files)
-// تأكد إن المسارات دي صحيحة في الفولدر عندك
-const authLogic = require("./logic/auth_logic");
-const notificationsLogic = require("./logic/notifications_logic");
+// --- 1. المالية ---
+exports.finance_grantWelcomePoints = onDocumentCreated("consumers/{uid}", (event) => {
+    return require("./logic/finance/loyalty_points").onNewConsumer(event);
+});
 
-// 3. تصدير الدوال للسحابة (الأسماء اللي بتظهر في Firebase Console)
+exports.finance_handleCashback = onDocumentUpdated("orders/{orderId}", (event) => {
+    return require("./logic/finance/cashback_handler").handleCashbackSettlement(event);
+});
 
-// 🛡️ دوال الصلاحيات والاشتراك التلقائي (القديمة)
-// ده هيصدر كل الدوال اللي جوه auth_logic (زي autoSubscribeOnSignup)
-exports.auth = authLogic;
+exports.finance_runMonthlySettlement = onSchedule({ schedule: "0 0 1 * *", timeZone: "Africa/Cairo" }, 
+async (event) => {
+    return require("./logic/finance/monthly_settlement").runMonthlySellerSettlement(event);
+});
 
-// 📢 دوال إرسال الإشعارات والترويج (الجديدة)
-// ده هيصدر الدالة المسؤولة عن مراقبة push_notifications وإرسالها
-exports.notifications = notificationsLogic;
+// --- 2. المراقب ---
+exports.watcher_watchOrders = onDocumentUpdated("orders/{orderId}", (event) => {
+    return require("./logic/watcher").watchOrders(event);
+});
+
+exports.watcher_watchConsumerOrders = onDocumentCreated("orders/{orderId}", (event) => {
+    return require("./logic/watcher").watchConsumerOrders(event);
+});
+
+// --- 3. المخازن ---
+exports.inventory_handleInventory = onDocumentUpdated("products/{productId}", (event) => {
+    return require("./logic/inventory").handleInventoryAndRepCode(event);
+});
+
+// --- 4. التوصيل ---
+exports.delivery_onNewTask = onDocumentCreated("delivery_tasks/{taskId}", (event) => {
+    return require("./logic/delivery").onNewDeliveryTask(event);
+});
+
+// --- 5. التنبيهات ---
+exports.notifications_sendPromo = onDocumentCreated("promotions/{promoId}", (event) => {
+    return require("./logic/notifications_logic").sendPromoNotification(event);
+});
+
+// --- 6. الطلبات (الجوهرة الجديدة - بدون AWS) ---
+exports.orders_createSecureOrder = onCall(async (request) => {
+    // التحميل بيحصل "لحظة النداء" فقط، الـ CLI مش هيشوفه وقت الرفع
+    const logic = require("./logic/orders/secure_order");
+    return await logic.createSecureOrder(request.data, request.auth.uid);
+});
 

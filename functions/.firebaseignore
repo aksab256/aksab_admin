@@ -1,0 +1,9 @@
+node_modules
+.git
+firebase-debug.log
+logic/delivery/**
+logic/inventory/**
+logic/watcher/**
+logic/notifications_logic.js
+auth_logic.js
+
