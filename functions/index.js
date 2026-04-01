@@ -1,66 +1,119 @@
+const admin = require("firebase-admin");
+
+// 🛡️ تهيئة ذاتية للملف لضمان عدم الاعتماد على ملف خارجي
+if (admin.apps.length === 0) {
+    admin.initializeApp();
+}
+const db = admin.firestore();
+
 /**
- * ⚠️ ملاحظة للهندسة: تم تحسين الـ index ليدعم الجيل الثاني (v2) 
- * وضمان سرعة الاستجابة وربط "الجوهرة" بملف المنطق الصحيح.
+ * دالة جلب العروض النشطة (Gift Promotions)
  */
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onSchedule } = require("firebase-functions/v2/scheduler");
-const { onCall } = require("firebase-functions/v2/https");
-const { setGlobalOptions } = require("firebase-functions/v2");
+async function getActivePromotions(db) {
+    try {
+        const snapshot = await db.collection("giftPromos")
+            .where("isActive", "==", true)
+            .get();
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+        console.error("❌ Error fetching promotions:", error);
+        return [];
+    }
+}
 
-// إعدادات الرام والمنطقة (us-central1 هي الافتراضية)
-setGlobalOptions({ region: "us-central1", memory: "256MiB" });
+/**
+ * دالة منطق الهدايا (يمكن توسيعها مستقبلاً)
+ */
+function applyPromotionsLogic(items, total, promotions, sellerId) {
+    return items; 
+}
 
-// --- 1. المالية ---
-exports.finance_grantWelcomePoints = onDocumentCreated("consumers/{uid}", (event) => {
-    return require("./logic/finance/loyalty_points").onNewConsumer(event);
-});
+/**
+ * 🎯 الدالة الرئيسية: تنفيذ "تأمين عهدة الطلب"
+ * يتم استدعاؤها من index.js
+ */
+exports.createOrderWithPromos = async (data, userIdFromAuth) => {
+    // استلام البيانات من طلب Flutter
+    const { ordersData } = data;
+    const userId = data.userId || userIdFromAuth;
+    let cashbackToReserve = parseFloat(data.cashbackToReserve) || 0;
 
-exports.finance_handleCashback = onDocumentUpdated("orders/{orderId}", (event) => {
-    return require("./logic/finance/cashback_handler").handleCashbackSettlement(event);
-});
+    if (!userId || !ordersData) {
+        throw new Error("بيانات الطلب أو معرف المستخدم ناقصة.");
+    }
 
-exports.finance_runMonthlySettlement = onSchedule({ schedule: "0 0 1 * *", timeZone: "Africa/Cairo" }, async (event) => {
-    return require("./logic/finance/monthly_settlement").runMonthlySellerSettlement(event);
-});
+    const activePromotions = await getActivePromotions(db);
+    const userRef = db.collection('users').doc(userId);
+    const ledgerRef = db.collection('transactionsLedger');
+    let successfulOrders = [];
 
-// --- 2. المراقب ---
-exports.watcher_watchOrders = onDocumentUpdated("orders/{orderId}", (event) => {
-    return require("./logic/watcher").watchOrders(event);
-});
+    try {
+        await db.runTransaction(async (transaction) => {
+            // أ. التحقق من رصيد الكاش باك (نقاط الأمان)
+            const userDoc = await transaction.get(userRef);
+            if (!userDoc.exists) throw new Error("USER_NOT_FOUND");
 
-exports.watcher_watchConsumerOrders = onDocumentCreated("orders/{orderId}", (event) => {
-    return require("./logic/watcher").watchConsumerOrders(event);
-});
+            const userData = userDoc.data();
+            const currentCashback = userData.cashback || 0;
 
-// --- 3. المخازن ---
-exports.inventory_handleInventory = onDocumentUpdated("products/{productId}", (event) => {
-    return require("./logic/inventory").handleInventoryAndRepCode(event);
-});
+            if (currentCashback < cashbackToReserve) {
+                throw new Error("رصيد الكاش باك غير كافٍ لتأمين العهدة.");
+            }
 
-// --- 4. التوصيل ---
-exports.delivery_onNewTask = onDocumentCreated("delivery_tasks/{taskId}", (event) => {
-    return require("./logic/delivery").onNewDeliveryTask(event);
-});
+            // ب. خصم من الكاش باك وحجز في "نقاط الأمان"
+            if (cashbackToReserve > 0) {
+                transaction.update(userRef, {
+                    cashback: admin.firestore.FieldValue.increment(-cashbackToReserve),
+                    cashbackReserved: admin.firestore.FieldValue.increment(cashbackToReserve)
+                });
 
-// --- 5. التنبيهات ---
-exports.notifications_sendPromo = onDocumentCreated("promotions/{promoId}", (event) => {
-    return require("./logic/notifications_logic").sendPromoNotification(event);
-});
+                // ج. توثيق العملية في سجل العمليات (Ledger)
+                const newLedgerDoc = ledgerRef.doc();
+                transaction.set(newLedgerDoc, {
+                    userId: userId,
+                    type: 'CASHBACK_RESERVATION',
+                    amount: cashbackToReserve,
+                    status: 'RESERVED',
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    description: `تأمين عهدة طلب جديد - رقم الوثيقة: ${newLedgerDoc.id}`
+                });
+            }
 
-// --- 6. الطلبات (الجوهرة: تأمين عهدة الطلب) ---
-// تم الربط مع Flutter 'orders_createSecureOrder'
-exports.orders_createSecureOrder = onCall(async (request) => {
-    /**
-     * 🎯 شرح الربط:
-     * - نستخدم require داخلي لضمان عدم تحميل المكتبات إلا عند الاستدعاء (Cold Start optimization).
-     * - اسم الدالة في ملف المنطق: createOrderWithPromos
-     */
-    const logic = require("./logic/orders/create_order");
-    
-    // تمرير البيانات (request.data) ومعرف المستخدم (request.auth.uid)
-    return await logic.createOrderWithPromos(
-        request.data, 
-        request.auth ? request.auth.uid : null
-    );
-});
+            // د. إنشاء مستندات الطلب لكل تاجر في السلة
+            for (const orderData of ordersData) {
+                const orderTotal = orderData.total || 0;
+
+                const itemsAfterPromotion = applyPromotionsLogic(
+                    orderData.items || [],
+                    orderTotal,
+                    activePromotions,
+                    orderData.sellerId
+                );
+
+                const orderRef = db.collection('orders').doc();
+                transaction.set(orderRef, {
+                    ...orderData,
+                    orderId: orderRef.id,
+                    items: itemsAfterPromotion,
+                    buyerId: userId,
+                    status: 'new-order',
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    isCashbackReserved: cashbackToReserve > 0
+                });
+                successfulOrders.push(orderRef.id);
+            }
+        });
+
+        return {
+            success: true,
+            orderIds: successfulOrders,
+            cashbackReserved: cashbackToReserve
+        };
+
+    } catch (error) {
+        console.error("❌ Order Transaction Failed:", error.message);
+        // إلقاء الخطأ ليعود لـ Flutter بشكل صحيح
+        throw error;
+    }
+};
 
