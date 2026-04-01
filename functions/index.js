@@ -19,7 +19,7 @@ exports.finance_handleCashback = onDocumentUpdated("orders/{orderId}", (event) =
     return require("./logic/finance/cashback_handler").handleCashbackSettlement(event);
 });
 
-exports.finance_runMonthlySettlement = onSchedule({ schedule: "0 0 1 * *", timeZone: "Africa/Cairo" }, 
+exports.finance_runMonthlySettlement = onSchedule({ schedule: "0 0 1 * *", timeZone: "Africa/Cairo" },
 async (event) => {
     return require("./logic/finance/monthly_settlement").runMonthlySellerSettlement(event);
 });
@@ -50,8 +50,10 @@ exports.notifications_sendPromo = onDocumentCreated("promotions/{promoId}", (eve
 
 // --- 6. الطلبات (الجوهرة الجديدة - بدون AWS) ---
 exports.orders_createSecureOrder = onCall(async (request) => {
-    // التحميل بيحصل "لحظة النداء" فقط، الـ CLI مش هيشوفه وقت الرفع
-    const logic = require("./logic/orders/secure_order");
-    return await logic.createSecureOrder(request.data, request.auth.uid);
+    // 🎯 التعديل هنا: تم تغيير المسار لـ create_order ليتطابق مع اسم الملف الفعلي
+    const logic = require("./logic/orders/create_order");
+    
+    // تمرير البيانات والـ UID الخاص بالمستخدم المصرح له
+    return await logic.createSecureOrder(request.data, request.auth ? request.auth.uid : null);
 });
 
