@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PendingStaffTab extends StatelessWidget {
-  const PendingStaffTab({super.key});
+  final FirebaseFirestore? firestore;
+  const PendingStaffTab({super.key, this.firestore});
 
   @override
   Widget build(BuildContext context) {
@@ -33,14 +34,14 @@ class PendingStaffTab extends StatelessWidget {
 
   // الدالة المحدثة بفلترة الأدوار
   Stream<List<QueryDocumentSnapshot>> _getCombinedPendingStream() {
-    return FirebaseFirestore.instance
+    return (firestore ?? FirebaseFirestore.instance)
         .collection('pendingReps')
         .where('role', isEqualTo: 'delivery_rep') // جلب مناديب التحصيل فقط وتجاهل sales_rep
         .snapshots()
         .map((repsSnap) => repsSnap.docs)
         .asyncMap((repsDocs) async {
           // جلب المديرين والمشرفين المعلقين بشرط أن يكونوا تابعين لقسم التحصيل
-          var mgrsSnap = await FirebaseFirestore.instance
+          var mgrsSnap = await (firestore ?? FirebaseFirestore.instance)
               .collection('pendingManagers')
               .where('role', whereIn: ['delivery_manager', 'delivery_supervisor'])
               .get();
@@ -71,13 +72,54 @@ class PendingStaffTab extends StatelessWidget {
         ),
         title: Text(data['fullname'] ?? '', style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         subtitle: Text("$roleLabel | ${data['phone']}", style: const TextStyle(fontFamily: 'Cairo', fontSize: 12)),
-        trailing: ElevatedButton(
-          onPressed: () => _openActivationDialog(context, uid, data, isManager),
-          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1A2C3D)),
-          child: const Text("تفعيل", style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.cancel, color: Colors.red),
+              tooltip: 'رفض وحذف الطلب',
+              onPressed: () => _rejectStaff(context, uid, isManager),
+            ),
+            ElevatedButton(
+              onPressed: () => _openActivationDialog(context, uid, data, isManager),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1A2C3D)),
+              child: const Text("تفعيل", style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  Future<void> _rejectStaff(BuildContext context, String uid, bool isManager) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الطلب نهائيًا؟', textAlign: TextAlign.center, style: TextStyle(fontFamily: 'Cairo')),
+        content: const Text('سيُحذف الطلب من قائمة الانتظار كأن لم يكن، ولن يُرسل أي رمز.',
+            textAlign: TextAlign.center, style: TextStyle(fontFamily: 'Cairo')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('تراجع', style: TextStyle(fontFamily: 'Cairo'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('حذف نهائي', style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      final sourceCol = isManager ? 'pendingManagers' : 'pendingReps';
+      await (firestore ?? FirebaseFirestore.instance).collection(sourceCol).doc(uid).delete();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حذف الطلب نهائيًا', style: TextStyle(fontFamily: 'Cairo'))),
+        );
+      }
+    } catch (e) {
+      debugPrint('reject staff failed: $e');
+    }
   }
 
   void _openActivationDialog(BuildContext context, String uid, Map<String, dynamic> data, bool isManager) {
@@ -148,8 +190,8 @@ class PendingStaffTab extends StatelessWidget {
         payload['walletBalance'] = 0;
       }
 
-      await FirebaseFirestore.instance.collection(targetCol).doc(uid).set(payload);
-      await FirebaseFirestore.instance.collection(sourceCol).doc(uid).delete();
+      await (firestore ?? FirebaseFirestore.instance).collection(targetCol).doc(uid).set(payload);
+      await (firestore ?? FirebaseFirestore.instance).collection(sourceCol).doc(uid).delete();
 
       if (context.mounted) {
         Navigator.pop(context);

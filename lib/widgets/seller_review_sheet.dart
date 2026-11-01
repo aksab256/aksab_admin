@@ -6,8 +6,9 @@ import 'product_selector_sheet.dart';
 class SellerReviewSheet extends StatefulWidget {
   final String docId;
   final Map<String, dynamic> data;
+  final FirebaseFirestore? firestore;
 
-  const SellerReviewSheet({super.key, required this.docId, required this.data});
+  const SellerReviewSheet({super.key, required this.docId, required this.data, this.firestore});
 
   @override
   State<SellerReviewSheet> createState() => _SellerReviewSheetState();
@@ -21,17 +22,54 @@ class _SellerReviewSheetState extends State<SellerReviewSheet> {
   List<Map<String, dynamic>> _tempProducts = [];
   bool _isProcessing = false;
 
+  FirebaseFirestore get _db => widget.firestore ?? FirebaseFirestore.instance;
+
   String _f(dynamic val) => (val == null || val.toString().isEmpty) ? "غير متوفر" : val.toString();
 
   /// الدالة المصححة لمنع الـ null في قاعدة البيانات
+  Future<void> _reject(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف طلب التاجر نهائيًا؟', textAlign: TextAlign.center, style: TextStyle(fontFamily: 'Cairo')),
+        content: const Text('سيُحذف الطلب من قائمة الانتظار كأن لم يكن، ولن يُرسل أي رمز.',
+            textAlign: TextAlign.center, style: TextStyle(fontFamily: 'Cairo')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('تراجع', style: TextStyle(fontFamily: 'Cairo'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('حذف نهائي', style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    setState(() => _isProcessing = true);
+    try {
+      await _db.collection('pendingSellers').doc(widget.docId).delete();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حذف الطلب نهائيًا', style: TextStyle(fontFamily: 'Cairo'))),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      setState(() => _isProcessing = false);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في الحذف: $e')));
+      }
+    }
+  }
+
   Future<void> _approve() async {
     setState(() => _isProcessing = true);
     try {
-      final batch = FirebaseFirestore.instance.batch();
+      final batch = _db.batch();
       final String sellerId = widget.docId;
 
-      final sellerRef = FirebaseFirestore.instance.collection('sellers').doc(sellerId);
-      final pendingRef = FirebaseFirestore.instance.collection('pendingSellers').doc(sellerId);
+      final sellerRef = _db.collection('sellers').doc(sellerId);
+      final pendingRef = _db.collection('pendingSellers').doc(sellerId);
 
       // البيانات المالية
       double rate = double.tryParse(_commissionRateController.text) ?? 0;
@@ -55,7 +93,7 @@ class _SellerReviewSheetState extends State<SellerReviewSheet> {
         if (pId.isEmpty) continue;
 
         final String offerId = "${sellerId}_$pId";
-        final offerRef = FirebaseFirestore.instance.collection('productOffers').doc(offerId);
+        final offerRef = _db.collection('productOffers').doc(offerId);
 
         // كتابة العرض مع التأكد من وجود كل الحقول المطلوبة كما في صورتك
         batch.set(offerRef, {
@@ -164,9 +202,12 @@ class _SellerReviewSheetState extends State<SellerReviewSheet> {
 
             // إضافة العروض من خلال الودجت الثانية
             _buildCard("إضافة العروض", [
-              ProductSelectorSheet(onProductAdded: (p) {
-                setState(() => _tempProducts.add(p));
-              }),
+              ProductSelectorSheet(
+                onProductAdded: (p) {
+                  setState(() => _tempProducts.add(p));
+                },
+                firestore: widget.firestore,
+              ),
               if (_tempProducts.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 10),
@@ -187,6 +228,20 @@ class _SellerReviewSheetState extends State<SellerReviewSheet> {
                   _isProcessing ? "جاري الحفظ..." : "تفعيل الحساب ونقل البيانات",
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: _isProcessing ? null : () => _reject(context),
+                child: const Text('رفض الطلب وحذفه نهائيًا',
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
               ),
             ),
           ],

@@ -4,7 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ProductSelectorSheet extends StatefulWidget {
   final Function(Map<String, dynamic>) onProductAdded;
-  const ProductSelectorSheet({super.key, required this.onProductAdded});
+  final FirebaseFirestore? firestore;
+  const ProductSelectorSheet({super.key, required this.onProductAdded, this.firestore});
 
   @override
   State<ProductSelectorSheet> createState() => _ProductSelectorSheetState();
@@ -31,7 +32,7 @@ class _ProductSelectorSheetState extends State<ProductSelectorSheet> {
 
         // 1. القسم الرئيسي
         StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('mainCategory').snapshots(),
+          stream: (widget.firestore ?? FirebaseFirestore.instance).collection('mainCategory').snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const LinearProgressIndicator();
             return DropdownButtonFormField<String>(
@@ -57,7 +58,7 @@ class _ProductSelectorSheetState extends State<ProductSelectorSheet> {
         // 2. القسم الفرعي
         if (selectedMainCatId != null)
           StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('subCategory')
+            stream: (widget.firestore ?? FirebaseFirestore.instance).collection('subCategory')
                 .where('mainId', isEqualTo: selectedMainCatId).snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const SizedBox();
@@ -83,7 +84,7 @@ class _ProductSelectorSheetState extends State<ProductSelectorSheet> {
         // 3. اختيار المنتج
         if (selectedSubCatId != null)
           StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('products')
+            stream: (widget.firestore ?? FirebaseFirestore.instance).collection('products')
                 .where('subId', isEqualTo: selectedSubCatId).snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const SizedBox();
