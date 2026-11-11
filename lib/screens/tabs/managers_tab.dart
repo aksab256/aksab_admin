@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'staff_display_name.dart';
 
 class ManagersTab extends StatelessWidget {
   const ManagersTab({super.key});
@@ -37,7 +38,7 @@ class ManagersTab extends StatelessWidget {
           backgroundColor: isSupervisor ? Colors.blue.shade800 : Colors.black87,
           child: Icon(isSupervisor ? Icons.support_agent : Icons.admin_panel_settings, color: Colors.white),
         ),
-        title: Text(data['fullname'] ?? '', style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+        title: Text(staffDisplayName(data), style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
         subtitle: Text("$roleName | كود: ${data['repCode'] ?? '---'}", style: const TextStyle(fontSize: 12)),
         trailing: IconButton(
           icon: const Icon(Icons.settings, color: Color(0xFF1A2C3D)),
@@ -74,8 +75,9 @@ class ManagersTab extends StatelessWidget {
                       isExpanded: true,
                       value: selectedManagerId,
                       items: mgrSnap.data!.docs.map((mDoc) => DropdownMenuItem(
+
                         value: mDoc.id,
-                        child: Text(mDoc['fullname'] ?? mDoc.id, style: const TextStyle(fontSize: 14)),
+                        child: Text(staffDisplayName(mDoc.data() as Map<String, dynamic>), style: const TextStyle(fontSize: 14)),
                       )).toList(),
                       onChanged: (val) => setDialogState(() => selectedManagerId = val),
                     );
