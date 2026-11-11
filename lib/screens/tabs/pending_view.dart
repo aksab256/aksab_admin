@@ -5,13 +5,12 @@ import 'staff_display_name.dart';
 import 'rep_type.dart';
 
 class PendingView extends StatelessWidget {
-  final FirebaseFirestore firestore;
-  PendingView({super.key, FirebaseFirestore? firestore})
-      : firestore = firestore ?? FirebaseFirestore.instance;
+  final FirebaseFirestore? firestore;
+  const PendingView({super.key, this.firestore});
 
   @override
   Widget build(BuildContext context) {
-    final FirebaseFirestore db = firestore;
+    final FirebaseFirestore db = firestore ?? FirebaseFirestore.instance;
 
     return StreamBuilder<List<QuerySnapshot>>(
       stream: CombineLatestStream.list([
