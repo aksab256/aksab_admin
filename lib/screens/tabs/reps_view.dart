@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../salary_detail_screen.dart'; // الشاشة الجديدة التي صممناها
+import 'staff_display_name.dart';
+import 'rep_type.dart';
 
 class RepsView extends StatelessWidget {
   const RepsView({super.key});
@@ -39,9 +41,9 @@ class RepsView extends StatelessWidget {
                   child: Icon(Icons.badge, color: Colors.white),
                 ),
                 title: InkWell(
-                  onTap: () => _navigateToSalary(context, repId, rep['fullname'] ?? ''),
+                  onTap: () => _navigateToSalary(context, repId, staffDisplayName(rep)),
                   child: Text(
-                    rep['fullname'] ?? 'بدون اسم',
+                    staffDisplayName(rep),
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       color: Colors.blue,
@@ -50,9 +52,9 @@ class RepsView extends StatelessWidget {
                     ),
                   ),
                 ),
-                subtitle: Text("كود المندوب: ${rep['repCode'] ?? 'غير معرف'}"),
+                subtitle: Text("كود المندوب: ${rep['repCode'] ?? 'غير معرف'}\nالنوع: ${repTypeLabelAr(rep['repType'])}"),
                 trailing: const Icon(Icons.chevron_left),
-                onTap: () => _navigateToSalary(context, repId, rep['fullname'] ?? ''),
+                onTap: () => _navigateToSalary(context, repId, staffDisplayName(rep)),
               ),
             );
           },

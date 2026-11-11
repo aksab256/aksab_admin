@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'staff_display_name.dart';
+import 'rep_type.dart';
 
 class SupervisorsView extends StatelessWidget {
-  const SupervisorsView({super.key});
+  final FirebaseFirestore firestore;
+  SupervisorsView({super.key, FirebaseFirestore? firestore})
+      : firestore = firestore ?? FirebaseFirestore.instance;
 
   @override
   Widget build(BuildContext context) {
-    final FirebaseFirestore db = FirebaseFirestore.instance;
+    final FirebaseFirestore db = firestore;
 
     return StreamBuilder<QuerySnapshot>(
       // التصحيح هنا: استخدام isEqualTo بدلاً من الفواصل العادية
@@ -30,12 +34,14 @@ class SupervisorsView extends StatelessWidget {
           itemCount: docs.length,
           itemBuilder: (context, index) {
             var sup = docs[index];
+            final supData = sup.data() as Map<String, dynamic>;
+            final supName = staffDisplayName(supData);
             return Card(
               child: ListTile(
-                title: Text(sup['fullname'] ?? 'بدون اسم'),
+                title: Text(supName),
                 subtitle: const Text("اضغط لتعيين المناديب"),
                 trailing: const Icon(Icons.handshake),
-                onTap: () => _showRepsDialog(context, db, sup.id, sup['fullname']),
+                onTap: () => _showRepsDialog(context, db, sup.id, supName),
               ),
             );
           },
@@ -47,6 +53,12 @@ class SupervisorsView extends StatelessWidget {
   void _showRepsDialog(BuildContext context, FirebaseFirestore db, String supId, String name) async {
     // جلب قائمة المناديب
     var allReps = await db.collection('salesRep').get();
+    // Freelance reps are never linked to supervisors: excluded from the
+    // dialog AND from the save batch below (legacy docs without a type
+    // count as permanent via normalizeRepType).
+    final visibleReps = allReps.docs
+        .where((doc) => isTargetEligible(doc.data()['repType']))
+        .toList();
     
     if (!context.mounted) return;
 
@@ -54,9 +66,9 @@ class SupervisorsView extends StatelessWidget {
       context: context,
       builder: (context) {
         // تحديد المناديب التابعين لهذا المشرف حالياً بناءً على حقل supervisorId
-        List<String> selectedIds = allReps.docs
+        List<String> selectedIds = visibleReps
             .where((doc) {
-              final data = doc.data() as Map<String, dynamic>;
+              final data = doc.data();
               return data['supervisorId'] == supId;
             })
             .map((doc) => doc.id)
@@ -67,14 +79,14 @@ class SupervisorsView extends StatelessWidget {
             title: Text("تعيين مناديب لـ $name", style: const TextStyle(fontFamily: 'Cairo')),
             content: SizedBox(
               width: double.maxFinite,
-              child: allReps.docs.isEmpty 
+              child: visibleReps.isEmpty 
                 ? const Text("لا يوجد مناديب متاحين")
                 : ListView(
                     shrinkWrap: true,
-                    children: allReps.docs.map((doc) {
-                      var repData = doc.data() as Map<String, dynamic>;
+                    children: visibleReps.map((doc) {
+                      var repData = doc.data();
                       return CheckboxListTile(
-                        title: Text(repData['fullname'] ?? 'بدون اسم'),
+                        title: Text(staffDisplayName(repData)),
                         value: selectedIds.contains(doc.id),
                         onChanged: (val) {
                           setState(() {
@@ -98,7 +110,7 @@ class SupervisorsView extends StatelessWidget {
                 onPressed: () async {
                   WriteBatch batch = db.batch();
                   // تحديث حقل supervisorId لكل المندوبين
-                  for (var doc in allReps.docs) {
+                  for (var doc in visibleReps) {
                     batch.update(doc.reference, {
                       'supervisorId': selectedIds.contains(doc.id) ? supId : null
                     });

@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:rxdart/rxdart.dart'; 
+import 'package:rxdart/rxdart.dart';
+import 'staff_display_name.dart';
+import 'rep_type.dart';
 
 class PendingView extends StatelessWidget {
-  const PendingView({super.key});
+  final FirebaseFirestore firestore;
+  PendingView({super.key, FirebaseFirestore? firestore})
+      : firestore = firestore ?? FirebaseFirestore.instance;
 
   @override
   Widget build(BuildContext context) {
-    final FirebaseFirestore db = FirebaseFirestore.instance;
+    final FirebaseFirestore db = firestore;
 
     return StreamBuilder<List<QuerySnapshot>>(
       stream: CombineLatestStream.list([
@@ -48,7 +52,7 @@ class PendingView extends StatelessWidget {
                   child: const Icon(Icons.person, color: Colors.white),
                 ),
                 title: Text(
-                  user['fullname'] ?? 'بدون اسم',
+                  staffDisplayName(user),
                   style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
                 ),
                 subtitle: Text(
@@ -60,7 +64,14 @@ class PendingView extends StatelessWidget {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.check_circle, color: Colors.green),
-                      onPressed: () => _approveUser(context, db, docId, user, sourceCollection),
+                      onPressed: () {
+                        // Sales reps must be classified before approval completes.
+                        if (user['role'] == 'sales_rep') {
+                          _showApproveRepDialog(context, db, docId, user, sourceCollection);
+                        } else {
+                          _approveUser(context, db, docId, user, sourceCollection, null);
+                        }
+                      },
                     ),
                     IconButton(
                       icon: const Icon(Icons.cancel, color: Colors.red),
@@ -76,7 +87,61 @@ class PendingView extends StatelessWidget {
     );
   }
 
-  Future<void> _approveUser(BuildContext context, FirebaseFirestore db, String docId, Map<String, dynamic> data, String sourceCol) async {
+  /// Mandatory rep-type dialog: approval cannot complete without a selection.
+  void _showApproveRepDialog(BuildContext context, FirebaseFirestore db,
+      String docId, Map<String, dynamic> data, String sourceCol) {
+    String? selectedType;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          title: Text("اعتماد مندوب: ${staffDisplayName(data)}",
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("اختيار نوع المندوب إلزامي لإتمام الموافقة.",
+                  style: TextStyle(fontSize: 12, fontFamily: 'Cairo')),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedType,
+                hint: const Text("اختر نوع المندوب *"),
+                items: const [
+                  DropdownMenuItem(value: kRepTypePermanent, child: Text("Permanent — موظف ثابت")),
+                  DropdownMenuItem(value: kRepTypeFreelance, child: Text("Freelance — مندوب حر")),
+                ],
+                onChanged: (v) => setDialogState(() => selectedType = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text("إلغاء"),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              onPressed: () async {
+                if (!isRepTypeSelectionValid(role: data['role']?.toString(), repType: selectedType)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("اختر نوع المندوب أولاً (Permanent / Freelance)")),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext);
+                await _approveUser(context, db, docId, data, sourceCol, selectedType);
+              },
+              child: const Text("اعتماد", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _approveUser(BuildContext context, FirebaseFirestore db, String docId, Map<String, dynamic> data, String sourceCol, String? repType) async {
     try {
       // المناديب يذهبون لـ salesRep والباقي لـ managers
       String targetCol = (data['role'] == 'sales_rep') ? 'salesRep' : 'managers';
@@ -87,6 +152,8 @@ class PendingView extends StatelessWidget {
       await db.collection(targetCol).doc(docId).set({
         ...data,
         'repCode': repCode,
+        // Employment classification saved in the SAME approval write.
+        if (data['role'] == 'sales_rep' && repType != null) 'repType': repType,
         'status': 'approved',
         'approvedAt': FieldValue.serverTimestamp(),
       });
