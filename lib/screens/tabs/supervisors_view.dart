@@ -4,13 +4,13 @@ import 'staff_display_name.dart';
 import 'rep_type.dart';
 
 class SupervisorsView extends StatelessWidget {
-  final FirebaseFirestore firestore;
-  SupervisorsView({super.key, FirebaseFirestore? firestore})
-      : firestore = firestore ?? FirebaseFirestore.instance;
+  final FirebaseFirestore? firestore;
+  const SupervisorsView({super.key, this.firestore});
+      // (injected firestore, if any, is resolved at the use site below)
 
   @override
   Widget build(BuildContext context) {
-    final FirebaseFirestore db = firestore;
+    final FirebaseFirestore db = firestore ?? FirebaseFirestore.instance;
 
     return StreamBuilder<QuerySnapshot>(
       // التصحيح هنا: استخدام isEqualTo بدلاً من الفواصل العادية
